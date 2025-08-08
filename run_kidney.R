@@ -8,7 +8,7 @@ dir <- "human_adult_kidney"
 mirna_gene_kidney <- read_csv(file.path(dir, "mirna_gene_organ_valid.csv"))
 
 # Read gene-miRNA interaction data for kidney and preprocess
-gene_mirna_kideny <- read_csv(file.path(dir, "gene_mirna_organ_valid.csv")) %>%
+gene_mirna_kidney <- read_csv(file.path(dir, "gene_mirna_organ_valid.csv")) %>%
   
   # Remove genes not found in SCE
   filter(VG != "SCE NotFound") %>%
@@ -23,7 +23,7 @@ gene_stats <- read_csv(file.path(dir, "gene_stats.csv")) %>%
   filter(is.na(UTR_sequence) == FALSE) %>% 
   
   # Join with miRNA data
-  left_join(gene_mirna_liver, by = c("ensembl_gene_id" = "Gene.ID"))
+  left_join(gene_mirna_kidney, by = c("ensembl_gene_id" = "Gene.ID"))
 
 # Create subset of genes that are not miRNA targets
 gene_stats_nt <- gene_stats %>%
@@ -229,14 +229,22 @@ write_csv(mirna_gene_liver_5, top_mir_path)
 
 # Function to check proportion of target genes for a specific miRNA
 check_proportion <- function(mir) {
+  
+  # Expand miRNA-gene data (one row per gene-miRNA pair)
   many_many <- mirna_gene_filtered_kidney %>%
     dplyr::select(-gene.number) %>%
     separate_rows(Gene.ID, sep = "/")
+  
+  # Get target genes for specified miRNA
   mir <- many_many %>% filter(miRNA == mir) %>% pull(Gene.ID)
+  
+  # Get statistics for target genes (keeping longest UTR per gene)
   gene_stats_mir <- gene_stats[gene_stats$ensembl_gene_id %in% mir, ] %>%
     group_by(ensembl_gene_id) %>%
     slice_max(utr_length, n = 1) %>%
     ungroup()
+  
+  # Summarize statistics by gene group and target status
   stats_summary_mir <- gene_stats_mir %>%
     group_by(ensembl_gene_id) %>%
     slice_max(utr_length, n = 1) %>%
@@ -258,22 +266,33 @@ check_proportion <- function(mir) {
 
 
 
-# Plot UTR length distribution by gene type (HVG/LVG)
-p7 <- ggplot(gene_stats %>% filter(VG != "Not HVG or LVG"),
-             aes(x = utr_length, fill = VG)) +
-  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
-  labs(x = "UTR Length",
-       y = "Frequency",
-       title = "UTR Length Distribution by Gene Type (Kidney)") +
-  scale_fill_manual(
-    values = c("salmon", "skyblue"),
-    name = "") +
+# Convert data and add logarithmic UTR lengths
+gene_stats_ecdf <- gene_stats %>% 
+  filter(VG != "Not HVG or LVG") %>%
+  mutate(log_utr = log(utr_length + 1))  # +1 to avoid taking logarithms to 0
+
+wilcox_result <- wilcox.test(log_utr ~ VG, data = gene_stats_ecdf)
+p_label <- ifelse(wilcox_result$p.value < 0.001, 
+                  "p < 0.001", 
+                  sprintf("p = %.3f", wilcox_result$p.value))
+w_label <- sprintf("W = %.0f", wilcox_result$statistic)
+
+p7 <- ggplot(gene_stats_ecdf, 
+             aes(x = log_utr, color = VG)) +
+  stat_ecdf(linewidth = 1, alpha = 0.8) + 
+  labs(x = "Log-scaled UTR Length", 
+       y = "Cumulative Probability",
+       title = "eCDF of UTR Length by Gene Type (Kidney)",
+       subtitle = paste("Wilcoxon test:", w_label, ",", p_label)) +
+  scale_color_manual(values = c("salmon", "skyblue"), 
+                     name = "") +
   theme_classic() +
   theme(
     plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
-    plot.subtitle = element_text(hjust = 0.5, size = 12)
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"
   )
-p7_path <- file.path(sa_path, "UTR Length.png")
+p7_path <- file.path(sa_path, "UTR Length comparison.png")
 ggsave(p7_path, p7, width = 8, height = 6, dpi = 600)
 
 
@@ -355,11 +374,13 @@ individual_mir_check <- function(mir, vg = NULL) {
 }
 
 # Analyze and plot effect of miR-21-5p
-p8 <- individual_mir_check("miR-21-5p")$violinbox
-p8_path <- file.path(sa_path, "single_mir_check.png")
+p8 <- individual_mir_check("miR-21-5p")$violin_box
+p8_path <- file.path(sa_path, "miR_21_5p_check.png")
 ggsave(p8_path, p8, width = 8, height = 6, dpi = 600)
 
-
+p9 <- individual_mir_check("miR-486-5p")$violin_box
+p9_path <- file.path(sa_path, "mir_486_5p_check.png")
+ggsave(p9_path, p9, width = 8, height = 6, dpi = 600)
 
 # Function to perform GO enrichment analysis for miRNA target genes
 run_go_enrichment <- function(mir,
@@ -401,8 +422,7 @@ run_go_enrichment <- function(mir,
       showCategory = show_category
     ) +
       labs(
-        x = "Gene Count",
-        title = paste("Kidney ", mir, " GO Enrichment")
+        x = "Gene Count"
       ) +
       theme_classic() +
       theme(
@@ -430,21 +450,40 @@ run_go_enrichment <- function(mir,
 # Perform GO enrichment for miR-21-5p and create plots
 result1 <- run_go_enrichment("miR-21-5p", pvalue_cutoff = 0.1)
 
-p9 <- result1$plots$barplot
-p9_path <- file.path(sa_path, "GO barplot miR21.png")
-ggsave(p9_path, p9, width = 8, height = 6, dpi = 600)
-
-p10 <- result1$plots$cnetplot
-p10_path <- file.path(sa_path, "GO cnetplot miR21.png")
+p10 <- result1$plots$barplot
+p10_path <- file.path(sa_path, "GO barplot miR21.png")
 ggsave(p10_path, p10, width = 8, height = 6, dpi = 600)
+
+p11 <- result1$plots$cnetplot
+p11_path <- file.path(sa_path, "GO cnetplot miR21.png")
+ggsave(p11_path, p11, width = 8, height = 6, dpi = 600)
 
 # Perform GO enrichment for miR-26a-5p and create plots
 result2 <- run_go_enrichment("miR-26a-5p", pvalue_cutoff = 0.1)
 
-p11 <- result2$plots$barplot
-p11_path <- file.path(sa_path, "GO barplot miR26a.png")
-ggsave(p11_path, p11, width = 8, height = 6, dpi = 600)
-
-p12 <- result2$plots$cnetplot
-p12_path <- file.path(sa_path, "GO cnetplot miR26a.png")
+p12 <- result2$plots$barplot
+p12_path <- file.path(sa_path, "GO barplot miR26a.png")
 ggsave(p12_path, p12, width = 8, height = 6, dpi = 600)
+
+# Perform GO enrichment for miR-486-5p and create plots
+result3 <- run_go_enrichment("miR-486-5p", pvalue_cutoff = 0.1)
+
+p13 <- result3$plots$barplot
+p13_path <- file.path(sa_path, "GO barplot miR486.png")
+ggsave(p13_path, p13, width = 8, height = 6, dpi = 600)
+
+p14 <- result3$plots$cnetplot
+p14_path <- file.path(sa_path, "GO cnetplot miR486.png")
+ggsave(p14_path, p14, width = 8, height = 6, dpi = 600)
+
+# UTR length v.s. miRNA count
+p15 <- ggplot(gene_stats, aes(x = utr_length, y = target.number)) +
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "firebrick") +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + 
+  labs(x = "3' UTR length (nt)", 
+       y = "Number of miRNA targets",
+       title = "Correlation between UTR length and miRNA target count (Kidney)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+p15_path <- file.path(sa_path, "cor UTR miRNA.png")
+ggsave(p15_path, p15, width = 8, height = 6, dpi = 600)
