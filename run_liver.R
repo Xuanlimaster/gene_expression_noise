@@ -266,22 +266,33 @@ check_proportion <- function(mir) {
 
 
 
-# Plot UTR length distribution by gene type (HVG/LVG)
-p7 <- ggplot(gene_stats %>% filter(VG != "Not HVG or LVG"),
-       aes(x = utr_length, fill = VG)) +
-  geom_histogram(alpha = 0.6, position = "identity", bins = 30) +
-  labs(x = "UTR Length",
-       y = "Frequency",
-       title = "UTR Length Distribution by Gene Type (Liver)") +
-  scale_fill_manual(
-    values = c("salmon", "skyblue"),
-    name = "") +
-  theme_classic()  +
+# Convert data and add logarithmic UTR lengths
+gene_stats_ecdf <- gene_stats %>% 
+  filter(VG != "Not HVG or LVG") %>%
+  mutate(log_utr = log(utr_length + 1))  # +1 to avoid taking logarithms to 0
+
+wilcox_result <- wilcox.test(log_utr ~ VG, data = gene_stats_ecdf)
+p_label <- ifelse(wilcox_result$p.value < 0.001, 
+                  "p < 0.001", 
+                  sprintf("p = %.3f", wilcox_result$p.value))
+w_label <- sprintf("W = %.0f", wilcox_result$statistic)
+
+p7 <- ggplot(gene_stats_ecdf, 
+             aes(x = log_utr, color = VG)) +
+  stat_ecdf(linewidth = 1, alpha = 0.8) + 
+  labs(x = "Log-scaled UTR Length", 
+       y = "Cumulative Probability",
+       title = "eCDF of UTR Length by Gene Type (Liver)",
+       subtitle = paste("Wilcoxon test:", w_label, ",", p_label)) +
+  scale_color_manual(values = c("salmon", "skyblue"), 
+                     name = "") +
+  theme_classic() +
   theme(
     plot.title = element_text(hjust = 0.5, face = "bold", size = 14),
-    plot.subtitle = element_text(hjust = 0.5, size = 12)
+    plot.subtitle = element_text(hjust = 0.5, size = 12),
+    legend.position = "right"
   )
-p7_path <- file.path(sa_path, "UTR Length.png")
+p7_path <- file.path(sa_path, "UTR Length comparison.png")
 ggsave(p7_path, p7, width = 8, height = 6, dpi = 600)
 
 
@@ -364,7 +375,7 @@ individual_mir_check <- function(mir, vg = NULL) {
 
 # Analyze and plot effect of miR-122-5p
 p8 <- individual_mir_check("miR-122-5p")$violinbox
-p8_path <- file.path(sa_path, "single_mir_check.png")
+p8_path <- file.path(sa_path, "mir_122_5p_check.png")
 ggsave(p8_path, p8, width = 8, height = 6, dpi = 600)
 
 
@@ -456,3 +467,15 @@ ggsave(p11_path, p11, width = 8, height = 6, dpi = 600)
 p12 <- result2$plots$cnetplot
 p12_path <- file.path(sa_path, "GO cnetplot miR26a.png")
 ggsave(p12_path, p12, width = 8, height = 6, dpi = 600)
+
+# UTR length v.s. miRNA count
+p13 <- ggplot(gene_stats, aes(x = utr_length, y = target.number)) +
+  geom_smooth(method = "lm", formula = y ~ x, se = TRUE, color = "firebrick") +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") + 
+  labs(x = "3' UTR length (nt)", 
+       y = "Number of miRNA targets",
+       title = "Correlation between UTR length and miRNA target count (Liver)") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14))
+p13_path <- file.path(sa_path, "cor UTR miRNA.png")
+ggsave(p13_path, p13, width = 8, height = 6, dpi = 600)
